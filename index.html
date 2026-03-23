@@ -303,11 +303,11 @@ body{font-family:'IBM Plex Sans KR',sans-serif;background:var(--bg);color:var(--
   </div>
   <div class="sep"></div>
   <div style="display:flex;gap:4px;flex-wrap:wrap;">
-    <button class="tf-btn" id="tf-15m" onclick="selectTf('15m',96)">15M</button>
-    <button class="tf-btn" id="tf-1h"  onclick="selectTf('1h',72)">1H</button>
-    <button class="tf-btn" id="tf-4h"  onclick="selectTf('4h',60)">4H</button>
-    <button class="tf-btn active" id="tf-1d" onclick="selectTf('1d',60)">1D</button>
-    <button class="tf-btn" id="tf-1w"  onclick="selectTf('1w',40)">1W</button>
+    <button class="tf-btn" id="tf-15m" onclick="selectTf('15m',120)">15M</button>
+    <button class="tf-btn" id="tf-1h"  onclick="selectTf('1h',100)">1H</button>
+    <button class="tf-btn" id="tf-4h"  onclick="selectTf('4h',120)">4H</button>
+    <button class="tf-btn active" id="tf-1d" onclick="selectTf('1d',90)">1D</button>
+    <button class="tf-btn" id="tf-1w"  onclick="selectTf('1w',60)">1W</button>
   </div>
   <button class="btn-ref" id="btn-ref" onclick="refreshAll()">
     <svg id="ref-icon" width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M10.5 2A5 5 0 1 1 7 1" stroke-linecap="round"/><path d="M10.5 1v1.5H9" stroke-linecap="round" stroke-linejoin="round"/></svg>
@@ -367,7 +367,7 @@ body{font-family:'IBM Plex Sans KR',sans-serif;background:var(--bg);color:var(--
 </div>
 
 <!-- ④ 메인 차트 -->
-<div class="sec-label">④ 차트 — EMA 리본 · VWAP · FVG · 지지/저항</div>
+<div class="sec-label">④ 차트 — EMA 리본 · VWAP · FVG · 지지/저항 · Supertrend</div>
 <div class="chart-card">
   <div class="chart-hdr">
     <span class="chart-lbl" id="chart-lbl">BTC/USDT · 1D</span>
@@ -823,35 +823,72 @@ function calcVWAP(highs,lows,closes,vols){
 // 시장 구조 (HH/HL/LH/LL)
 // ═══════════════════════════════════════════════
 function detectStructure(highs,lows,closes){
-  if(!highs||highs.length<10)return null;
-  var n=highs.length,w=3;
-  var pivH=[],pivL=[];
-  for(var i=w;i<n-w;i++){
-    var isH=true,isL=true;
-    for(var j=i-w;j<=i+w;j++){if(j!==i){if(highs[j]>=highs[i])isH=false;if(lows[j]<=lows[i])isL=false;}}
-    if(isH)pivH.push({idx:i,v:highs[i]});
-    if(isL)pivL.push({idx:i,v:lows[i]});
-  }
-  // 최근 3개씩
-  var rh=pivH.slice(-3),rl=pivL.slice(-3);
-  if(rh.length<2||rl.length<2)return{trend:'sideways',label:'횡보',strength:0,pivH:rh,pivL:rl};
+  if(!highs||highs.length<20)return null;
+  var n=highs.length;
 
-  var h1=rh[rh.length-2].v,h2=rh[rh.length-1].v;
-  var l1=rl[rl.length-2].v,l2=rl[rl.length-1].v;
-  var hhhl=h2>h1&&l2>l1; // 상승
-  var lhll=h2<h1&&l2<l1; // 하락
-  var hhll=h2>h1&&l2<l1; // 확장
-  var lhhl=h2<h1&&l2>l1; // 수렴
+  // 최근 80봉 사용
+  var startIdx=Math.max(0,n-80);
+  var H=highs.slice(startIdx);
+  var L=lows.slice(startIdx);
+  var len=H.length;
+
+  // ── ZigZag 알고리즘 (반전 임계값 3%) ──
+  var threshold=0.03; // 3%
+  var pivots=[]; // {type:'H'|'L', idx, v}
+  var lastType=null,lastVal=0,lastIdx=0;
+
+  // 첫 방향 결정
+  var firstH=H[0],firstL=L[0];
+  for(var i=1;i<Math.min(5,len);i++){
+    if(H[i]>firstH)firstH=H[i];
+    if(L[i]<firstL)firstL=L[i];
+  }
+
+  for(var i=0;i<len;i++){
+    if(lastType===null){
+      lastType='L';lastVal=L[i];lastIdx=i;
+      continue;
+    }
+    if(lastType==='L'){
+      if(H[i]>lastVal*(1+threshold)){
+        // 저점 확정 후 고점 탐색 시작
+        pivots.push({type:'L',idx:startIdx+lastIdx,v:lastVal});
+        lastType='H';lastVal=H[i];lastIdx=i;
+      } else if(L[i]<lastVal){
+        lastVal=L[i];lastIdx=i; // 더 낮은 저점으로 갱신
+      }
+    } else {
+      if(L[i]<lastVal*(1-threshold)){
+        // 고점 확정 후 저점 탐색 시작
+        pivots.push({type:'H',idx:startIdx+lastIdx,v:lastVal});
+        lastType='L';lastVal=L[i];lastIdx=i;
+      } else if(H[i]>lastVal){
+        lastVal=H[i];lastIdx=i; // 더 높은 고점으로 갱신
+      }
+    }
+  }
+  // 마지막 미확정 피봇 추가
+  if(lastType)pivots.push({type:lastType,idx:startIdx+lastIdx,v:lastVal});
+
+  var pivH=pivots.filter(function(p){return p.type==='H';}).slice(-3);
+  var pivL=pivots.filter(function(p){return p.type==='L';}).slice(-3);
+
+  if(pivH.length<2||pivL.length<2)return{trend:'sideways',label:'횡보',strength:0,pivH:pivH,pivL:pivL};
+
+  var h1=pivH[pivH.length-2].v,h2v=pivH[pivH.length-1].v;
+  var l1=pivL[pivL.length-2].v,l2v=pivL[pivL.length-1].v;
+  var hhhl=h2v>h1&&l2v>l1;
+  var lhll=h2v<h1&&l2v<l1;
+  var hhll=h2v>h1&&l2v<l1;
+  var lhhl=h2v<h1&&l2v>l1;
 
   var trend=hhhl?'uptrend':lhll?'downtrend':'sideways';
   var label=hhhl?'상승 추세 (HH·HL)':lhll?'하락 추세 (LH·LL)':hhll?'확장 변동성':lhhl?'수렴 (삼각수렴)':'횡보';
-
-  // 강도: 최근 고점/저점 이동 폭
-  var hMove=Math.abs(h2-h1)/h1*100;
-  var lMove=Math.abs(l2-l1)/l1*100;
+  var hMove=Math.abs(h2v-h1)/h1*100;
+  var lMove=Math.abs(l2v-l1)/l1*100;
   var strength=Math.round((hMove+lMove)/2*10)/10;
 
-  return{trend:trend,label:label,strength:strength,pivH:rh,pivL:rl,hhhl:hhhl,lhll:lhll};
+  return{trend:trend,label:label,strength:strength,pivH:pivH,pivL:pivL,hhhl:hhhl,lhll:lhll};
 }
 
 // FVG 감지
@@ -975,6 +1012,63 @@ function applyZoom(){
     pChart.options.scales.y.max=yMax+pad;
   }
   pChart.update('none');
+  // 현재 보이는 구간으로 시장 구조 동적 재계산
+  renderStructureForRange(mn,mx);
+}
+
+// 현재 줌 구간 기준으로 시장 구조 재계산
+function renderStructureForRange(mn,mx){
+  if(!state.highs||!state.highs.length)return;
+  var H=state.highs.slice(mn,mx+1);
+  var L=state.lows.slice(mn,mx+1);
+  var C=state.closes.slice(mn,mx+1);
+  if(H.length<12)return;
+
+  var tEl=document.getElementById('ms-trend');
+  var lEl=document.getElementById('ms-label');
+  var sEl=document.getElementById('ms-strength');
+  var dEl=document.getElementById('ms-detail');
+  var swEl=document.getElementById('ms-swings');
+  if(!tEl)return;
+
+  // Supertrend (period=10, factor=3)
+  var st=calcSupertrend(H,L,C,10,3);
+  if(!st){dEl.textContent='데이터 부족 (최소 12봉 필요)';return;}
+
+  var trend=st.trend;
+  var label=trend==='uptrend'?'상승 추세 (Supertrend↑)':'하락 추세 (Supertrend↓)';
+  var lastClose=C[C.length-1];
+  var lastST=st.value;
+  var dist=Math.abs(lastClose-lastST)/lastClose*100;
+  var dir=st.direction;
+  var switches=0;
+  for(var i=1;i<dir.length;i++)if(dir[i]!==dir[i-1])switches++;
+
+  var col=trend==='uptrend'?'var(--green)':'var(--red)';
+  tEl.textContent=trend==='uptrend'?'↗ 상승 추세':'↘ 하락 추세';
+  tEl.style.color=col;
+  lEl.textContent=label;
+  sEl.textContent=dist.toFixed(1)+'%';
+  sEl.style.color=dist>3?'var(--green)':dist>1?'var(--amber)':'var(--t3)';
+
+  var adxEl=document.getElementById('ms-adx');
+  var diEl=document.getElementById('ms-di');
+  var adxTagEl=document.getElementById('ms-adx-tag');
+  if(adxEl){
+    var adx=calcADX(H,L,C);
+    if(adx){
+      adxEl.textContent=adx.adx;
+      adxEl.style.color=adx.adx>=40?'var(--green)':adx.adx>=25?'var(--amber)':'var(--t3)';
+      diEl.innerHTML='<span style="color:var(--green)">'+adx.diPlus+'</span> / <span style="color:var(--red)">'+adx.diMinus+'</span>';
+      var adxLabel=adx.adx>=40?'강한 추세':adx.adx>=25?'추세 형성':'횡보';
+      var adxCls=adx.adx>=40?'pg':adx.adx>=25?'pa':'pn';
+      var dirLabel=adx.adx>=25?(adx.diPlus>adx.diMinus?' · DI+↑':' · DI−↑'):'';
+      adxTagEl.innerHTML='<span class="pill '+adxCls+'" style="font-size:10px;cursor:help;" onmouseenter="showTip(event,\'adx\')" onmouseleave="hideTip()">ADX '+adxLabel+dirLabel+'</span>';
+    }
+  }
+
+  dEl.textContent='ST: '+fp(Math.round(lastST*100)/100)+' · 현재가 '+(lastClose>lastST?'위 +':'아래 -')+dist.toFixed(2)+'% · 전환 '+switches+'회 ['+H.length+'봉]';
+  swEl.innerHTML=trend==='uptrend'?tagHtml('pg','Supertrend 상승 — 매수 유효'):tagHtml('pr','Supertrend 하락 — 매도 우위');
 }
 function setupZoom(canvas){
   canvas.style.cursor='crosshair';
@@ -1019,11 +1113,11 @@ function fetchMacro(){
 
 function fetchMTF(){
   return Promise.all([
-    fetchK(coin,'15m',80),
-    fetchK(coin,'1h',72),
-    fetchK(coin,'4h',60),
-    fetchK(coin,'1d',60),
-    fetchK(coin,'1w',40)
+    fetchK(coin,'15m',120),
+    fetchK(coin,'1h',100),
+    fetchK(coin,'4h',120),
+    fetchK(coin,'1d',90),
+    fetchK(coin,'1w',60)
   ]);
 }
 
@@ -1153,39 +1247,77 @@ function renderMetrics(){
 }
 
 function renderStructure(){
-  var s=detectStructure(state.highs,state.lows,state.closes);
-  if(!s)return;
-  var col=s.trend==='uptrend'?'var(--green)':s.trend==='downtrend'?'var(--red)':'var(--amber)';
-  document.getElementById('ms-trend').textContent=s.trend==='uptrend'?'↗ 상승 추세':s.trend==='downtrend'?'↘ 하락 추세':'↔ 중립';
-  document.getElementById('ms-trend').style.color=col;
-  document.getElementById('ms-label').textContent=s.label;
-  document.getElementById('ms-strength').textContent=s.strength+'%';
-  document.getElementById('ms-strength').style.color=s.strength>3?'var(--red)':s.strength>1?'var(--amber)':'var(--t2)';
+  // 항상 현재 줌 구간 기준으로 계산 — refreshAll과 충돌 방지
+  var mn=Math.max(0,Math.round(zoom.minIdx));
+  var mx=Math.min(state.closes.length-1,Math.round(zoom.maxIdx));
+  if(mx<=mn)return;
+  renderStructureForRange(mn,mx);
+}
 
-  // ADX
-  var adx=calcADX(state.highs,state.lows,state.closes);
-  if(adx){
-    document.getElementById('ms-adx').textContent=adx.adx;
-    var adxCol=adx.adx>=40?'var(--green)':adx.adx>=25?'var(--amber)':'var(--t3)';
-    document.getElementById('ms-adx').style.color=adxCol;
-    document.getElementById('ms-di').innerHTML=
-      '<span style="color:var(--green)">'+adx.diPlus+'</span> / <span style="color:var(--red)">'+adx.diMinus+'</span>';
-    var adxLabel=adx.adx>=40?'강한 추세':adx.adx>=25?'추세 형성':'횡보';
-    var adxCls=adx.adx>=40?'pg':adx.adx>=25?'pa':'pn';
-    var dirLabel=adx.adx>=25?(adx.diPlus>adx.diMinus?' · DI+↑':' · DI−↑'):'';
-    document.getElementById('ms-adx-tag').innerHTML='<span class="pill '+adxCls+'" style="font-size:10px;cursor:help;" onmouseenter="showTip(event,\'adx\')" onmouseleave="hideTip()">ADX '+adxLabel+dirLabel+'</span>';
+// Supertrend 계산 (ATR 기반 추세 추종 지표)
+// factor: ATR 배수 (기본 3), period: ATR 기간 (기본 10)
+function calcSupertrend(highs,lows,closes,period,factor){
+  period=period||10;factor=factor||3;
+  var n=highs.length;
+  if(n<period+2)return null;
+
+  // ATR 계산
+  var tr=[];
+  for(var i=1;i<n;i++){
+    tr.push(Math.max(
+      highs[i]-lows[i],
+      Math.abs(highs[i]-closes[i-1]),
+      Math.abs(lows[i]-closes[i-1])
+    ));
+  }
+  // Wilder 스무딩 ATR
+  var atrArr=new Array(n).fill(null);
+  var initAtr=0;
+  for(var i=0;i<period;i++)initAtr+=tr[i];
+  atrArr[period]=initAtr/period;
+  for(var i=period+1;i<n;i++)
+    atrArr[i]=(atrArr[i-1]*(period-1)+tr[i-1])/period;
+
+  // 기본 상단/하단 밴드
+  var upperBand=new Array(n).fill(null);
+  var lowerBand=new Array(n).fill(null);
+  var supertrend=new Array(n).fill(null);
+  var direction=new Array(n).fill(1); // 1=하락(빨강), -1=상승(초록)
+
+  for(var i=period;i<n;i++){
+    var hl2=(highs[i]+lows[i])/2;
+    var atr=atrArr[i];
+    var basicUpper=hl2+factor*atr;
+    var basicLower=hl2-factor*atr;
+
+    // 밴드 조정 (이전 밴드보다 안으로 좁혀지지 않도록)
+    upperBand[i]=i>period&&basicUpper<upperBand[i-1]?basicUpper:
+                 i>period?upperBand[i-1]:basicUpper;
+    lowerBand[i]=i>period&&basicLower>lowerBand[i-1]?basicLower:
+                 i>period?lowerBand[i-1]:basicLower;
+
+    // 방향 결정
+    if(i===period){
+      direction[i]=closes[i]>basicUpper?-1:1;
+    } else {
+      if(direction[i-1]===1){
+        direction[i]=closes[i]>upperBand[i]?-1:1;
+      } else {
+        direction[i]=closes[i]<lowerBand[i]?1:-1;
+      }
+    }
+    supertrend[i]=direction[i]===1?upperBand[i]:lowerBand[i];
   }
 
-  var detail='';
-  if(s.pivH.length>=2)detail+='최근 고점: '+fp(s.pivH[s.pivH.length-2].v)+' → '+fp(s.pivH[s.pivH.length-1].v)+' '+(s.pivH[s.pivH.length-1].v>s.pivH[s.pivH.length-2].v?'(HH↑)':'(LH↓)');
-  if(s.pivL.length>=2)detail+=' / 저점: '+fp(s.pivL[s.pivL.length-2].v)+' → '+fp(s.pivL[s.pivL.length-1].v)+' '+(s.pivL[s.pivL.length-1].v>s.pivL[s.pivL.length-2].v?'(HL↑)':'(LL↓)');
-  document.getElementById('ms-detail').textContent=detail||'데이터 부족';
-
-  var swingsHtml='';
-  if(s.hhhl)swingsHtml+=tagHtml('pg','HH·HL — 매수 유효');
-  else if(s.lhll)swingsHtml+=tagHtml('pr','LH·LL — 매도 우위');
-  else swingsHtml+=tagHtml('pa','혼재 — 방향 확인 필요');
-  document.getElementById('ms-swings').innerHTML=swingsHtml;
+  return{
+    supertrend:supertrend,
+    direction:direction,
+    upperBand:upperBand,
+    lowerBand:lowerBand,
+    // 마지막 방향: -1=상승, 1=하락
+    trend:direction[n-1]===-1?'uptrend':'downtrend',
+    value:supertrend[n-1]
+  };
 }
 
 function renderChart(){
@@ -1273,6 +1405,46 @@ function renderChart(){
         var lbl=l.type+' '+fp(l.v),tw=ctx.measureText(lbl).width+8;
         ctx.fillRect(xA.right-tw-2,y-8,tw+2,13);ctx.fillStyle='#fff';ctx.fillText(lbl,xA.right-3,y+1);
       });
+
+      // Supertrend 오버레이
+      var st=calcSupertrend(highs,lows,closes,10,3);
+      if(st&&st.supertrend){
+        ctx.save();
+        ctx.lineWidth=2;
+        ctx.setLineDash([]);
+        var prevDir=null,segStart=null,segStartVal=null;
+        for(var si=minI;si<=maxI;si++){
+          if(st.supertrend[si]===null)continue;
+          var curDir=st.direction[si];
+          var px=xA.getPixelForValue(si);
+          var py=yA.getPixelForValue(st.supertrend[si]);
+          if(prevDir===null||curDir!==prevDir){
+            // 방향 전환 — 이전 세그먼트 마무리 후 새 세그먼트 시작
+            if(segStart!==null)ctx.stroke();
+            ctx.strokeStyle=curDir===-1?'rgba(63,185,80,0.85)':'rgba(248,81,73,0.85)';
+            ctx.beginPath();
+            ctx.moveTo(px,py);
+            segStart=si;
+          } else {
+            ctx.lineTo(px,py);
+          }
+          prevDir=curDir;
+        }
+        if(segStart!==null)ctx.stroke();
+
+        // 마지막 값 레이블
+        var lastST=st.supertrend[maxI];
+        if(lastST!==null){
+          var lastDir=st.direction[maxI];
+          var lx=xA.getPixelForValue(maxI);
+          var ly=yA.getPixelForValue(lastST);
+          ctx.font='bold 9px IBM Plex Mono,monospace';
+          ctx.textAlign='left';
+          ctx.fillStyle=lastDir===-1?'rgba(63,185,80,0.9)':'rgba(248,81,73,0.9)';
+          ctx.fillText('ST '+(lastDir===-1?'↑':'↓')+' '+fp(Math.round(lastST*100)/100),lx+4,ly+4);
+        }
+        ctx.restore();
+      }
       ctx.restore();
     }
   };
