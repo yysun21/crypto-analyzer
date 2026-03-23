@@ -610,12 +610,8 @@ body{font-family:'IBM Plex Sans KR',sans-serif;background:var(--bg);color:var(--
       <span style="color:var(--t2);">진입 타이밍 — 4H 필수(StochRSI+VWAP) + 3/5 이상 충족 시</span>
     </label>
     <label style="display:flex;align-items:center;gap:8px;font-size:12px;cursor:pointer;">
-      <input type="checkbox" id="alert-stoch" checked style="accent-color:var(--purple);">
-      <span style="color:var(--t2);">StochRSI 골든크로스 발생 시 (4H)</span>
-    </label>
-    <label style="display:flex;align-items:center;gap:8px;font-size:12px;cursor:pointer;">
-      <input type="checkbox" id="alert-vwap" checked style="accent-color:var(--blue);">
-      <span style="color:var(--t2);">VWAP 복귀 시 (4H, 아래→위 전환)</span>
+      <input type="checkbox" id="alert-volume" checked style="accent-color:var(--blue);">
+      <span style="color:var(--t2);">거래량 급등 — 4H 기준 평균 대비 3x 이상 시</span>
     </label>
     <label style="display:flex;align-items:center;gap:8px;font-size:12px;cursor:pointer;">
       <input type="checkbox" id="alert-funding" style="accent-color:var(--amber);">
@@ -1107,8 +1103,11 @@ function setupZoom(canvas){
     e.preventDefault();
     e.stopPropagation();
     if(e.touches.length===1){
-      touch.dragging=true;touch.pinching=false;
+      touch.dragging=false; // 아직 드래그 미확정
+      touch.pinching=false;
       touch.startX=e.touches[0].clientX;
+      touch.startY=e.touches[0].clientY;
+      touch.moved=false;
       touch.startMin=zoom.minIdx;touch.startMax=zoom.maxIdx;
     } else if(e.touches.length===2){
       touch.pinching=true;touch.dragging=false;
@@ -1124,23 +1123,28 @@ function setupZoom(canvas){
     var n=state.closes.length;if(!n)return;
     var rect=canvas.getBoundingClientRect();
 
-    if(e.touches.length===1&&touch.dragging&&!touch.pinching){
-      // 1손가락 드래그
-      var span=touch.startMax-touch.startMin;
-      var ppx=rect.width/Math.max(1,span);
-      var d=(e.touches[0].clientX-touch.startX)/ppx;
-      var nm=touch.startMin-d,nx=touch.startMax-d;
-      if(nm<0){nx+=(-nm);nm=0;}
-      if(nx>n-1){nm-=(nx-(n-1));nx=n-1;}
-      zoom.minIdx=Math.max(0,nm);zoom.maxIdx=Math.min(n-1,nx);
-      applyZoom();
+    if(e.touches.length===1&&!touch.pinching){
+      var dx=e.touches[0].clientX-touch.startX;
+      var dy=e.touches[0].clientY-touch.startY;
+      // 수평 이동이 10px 이상이고 수직보다 크면 드래그로 확정
+      if(!touch.dragging&&Math.abs(dx)>10&&Math.abs(dx)>Math.abs(dy)){
+        touch.dragging=true;
+      }
+      if(touch.dragging){
+        var span=touch.startMax-touch.startMin;
+        var ppx=rect.width/Math.max(1,span);
+        var d=dx/ppx;
+        var nm=touch.startMin-d,nx=touch.startMax-d;
+        if(nm<0){nx+=(-nm);nm=0;}
+        if(nx>n-1){nm-=(nx-(n-1));nx=n-1;}
+        zoom.minIdx=Math.max(0,nm);zoom.maxIdx=Math.min(n-1,nx);
+        applyZoom();
+      }
     } else if(e.touches.length===2&&touch.pinching){
-      // 2손가락 핀치 줌
       var newDist=getTouchDist(e);
-      var scale=touch.pinchDist/newDist; // >1 이면 줌아웃, <1 이면 줌인
+      var scale=touch.pinchDist/newDist;
       var span=touch.startMax-touch.startMin;
       var ns=Math.min(n-1,Math.max(5,span*scale));
-      // 핀치 중심점 기준으로 줌
       var midX=getTouchMidX(e);
       var r=(midX-rect.left)/rect.width;
       var c=touch.startMin+span*r;
@@ -2212,14 +2216,12 @@ function checkTgAlerts(){
   coinCbs.forEach(function(cb){if(cb.checked)monitorCoins.push(cb.value);});
   if(!monitorCoins.length)return;
 
-  // 알림 조건 — 체크박스 상태 명확히 읽기
+  // 알림 조건
   var doEntry=!!(document.getElementById('alert-entry')&&document.getElementById('alert-entry').checked);
-  var doStoch=!!(document.getElementById('alert-stoch')&&document.getElementById('alert-stoch').checked);
-  var doVwap=!!(document.getElementById('alert-vwap')&&document.getElementById('alert-vwap').checked);
+  var doVolume=!!(document.getElementById('alert-volume')&&document.getElementById('alert-volume').checked);
   var doFunding=!!(document.getElementById('alert-funding')&&document.getElementById('alert-funding').checked);
 
-  // 아무것도 체크 안 됐으면 종료
-  if(!doEntry&&!doStoch&&!doVwap&&!doFunding)return;
+  if(!doEntry&&!doVolume&&!doFunding)return;
 
   monitorCoins.forEach(function(c){
     // 코인별 상태 초기화 (lastStoch는 'init'으로 시작 — 첫 실행에서 알림 안 나가게)
@@ -2255,33 +2257,14 @@ function checkTgAlerts(){
           }
         }
 
-        // 2. StochRSI 골든크로스 — init 상태에서는 현재값만 기록, 알림 X
-        if(doStoch){
-          var srsi2=calcStochRSI(cl);
-          var cur=srsi2?srsi2.cross:'none';
-          if(cs.lastStoch==='init'){
-            cs.lastStoch=cur; // 첫 실행: 현재 상태 기록만
-          } else if(cur==='golden'&&cs.lastStoch!=='golden'){
-            cs.lastStoch='golden';
-            sendTg('💜 <b>'+c+' StochRSI 골든크로스</b>\nK='+srsi2.k.toFixed(1)+' D='+srsi2.d.toFixed(1)+'\n현재가: '+fp(last)+'\n⏰ '+new Date().toLocaleTimeString());
-          } else {
-            cs.lastStoch=cur;
-          }
-        }
-
-        // 3. VWAP 복귀 — null 상태(첫 실행)에서는 기록만, 알림 X
-        if(doVwap){
-          var vwap2=calcVWAP(h,l,cl,vo);
-          if(vwap2){
-            var isAbove=last>vwap2;
-            if(cs.lastVwapAbove===null){
-              cs.lastVwapAbove=isAbove; // 첫 실행: 현재 상태 기록만
-            } else if(isAbove&&cs.lastVwapAbove===false){
-              sendTg('🔵 <b>'+c+' VWAP 복귀</b>\n가격이 VWAP 위로 전환\nVWAP: '+fp(vwap2)+' | 현재가: '+fp(last)+'\n⏰ '+new Date().toLocaleTimeString());
-              cs.lastVwapAbove=isAbove;
-            } else {
-              cs.lastVwapAbove=isAbove;
-            }
+        // 2. 거래량 급등 — 평균 3x 이상 (10분 쿨다운)
+        if(doVolume&&now-(cs.lastVolSpike||0)>600000){
+          var avgV=vo.slice(-20).reduce(function(a,b){return a+b;},0)/20;
+          var curV=vo[vo.length-1];
+          var vm=avgV>0?curV/avgV:0;
+          if(vm>=3){
+            cs.lastVolSpike=now;
+            sendTg('📊 <b>'+c+' 거래량 급등</b>\n평균 대비 '+vm.toFixed(1)+'x\n현재가: '+fp(last)+'\n⏰ '+new Date().toLocaleTimeString());
           }
         }
       })
