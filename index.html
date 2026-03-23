@@ -375,7 +375,7 @@ body{font-family:'IBM Plex Sans KR',sans-serif;background:var(--bg);color:var(--
       <button class="btn-reset" onclick="resetZoom()">↺ 리셋</button>
     </div>
   </div>
-  <div style="position:relative;height:340px;"><canvas id="priceChart"></canvas></div>
+  <div style="position:relative;height:340px;"><canvas id="priceChart" style="touch-action:none;"></canvas></div>
   <div style="display:flex;justify-content:space-between;align-items:center;margin-top:8px;">
     <div id="chart-context-wrap" style="display:flex;align-items:center;gap:8px;position:relative;">
       <div id="chart-context-dot" style="width:8px;height:8px;border-radius:50%;background:var(--t3);flex-shrink:0;cursor:help;"
@@ -1105,22 +1105,22 @@ function setupZoom(canvas){
 
   canvas.addEventListener('touchstart',function(e){
     e.preventDefault();
+    e.stopPropagation();
     if(e.touches.length===1){
-      // 드래그 시작
       touch.dragging=true;touch.pinching=false;
       touch.startX=e.touches[0].clientX;
       touch.startMin=zoom.minIdx;touch.startMax=zoom.maxIdx;
     } else if(e.touches.length===2){
-      // 핀치 줌 시작
       touch.pinching=true;touch.dragging=false;
       touch.pinchDist=getTouchDist(e);
       touch.startMin=zoom.minIdx;touch.startMax=zoom.maxIdx;
       touch.pinchMidX=getTouchMidX(e);
     }
-  },{passive:false});
+  },{passive:false,capture:true});
 
   canvas.addEventListener('touchmove',function(e){
     e.preventDefault();
+    e.stopPropagation();
     var n=state.closes.length;if(!n)return;
     var rect=canvas.getBoundingClientRect();
 
