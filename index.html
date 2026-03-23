@@ -1072,6 +1072,8 @@ function renderStructureForRange(mn,mx){
 }
 function setupZoom(canvas){
   canvas.style.cursor='crosshair';
+
+  // ── 마우스 이벤트 (PC) ──
   canvas.onwheel=function(e){
     e.preventDefault();var n=state.closes.length;if(!n)return;
     var span=zoom.maxIdx-zoom.minIdx,f=e.deltaY>0?1.15:0.87,ns=Math.min(n-1,Math.max(5,span*f));
@@ -1088,6 +1090,76 @@ function setupZoom(canvas){
   };
   var end=function(){zoom.dragging=false;canvas.style.cursor='crosshair';};
   canvas.onmouseup=end;canvas.onmouseleave=end;
+
+  // ── 터치 이벤트 (모바일) ──
+  var touch={dragging:false,pinching:false,startX:0,startMin:0,startMax:0,pinchDist:0};
+
+  function getTouchDist(e){
+    var dx=e.touches[0].clientX-e.touches[1].clientX;
+    var dy=e.touches[0].clientY-e.touches[1].clientY;
+    return Math.sqrt(dx*dx+dy*dy);
+  }
+  function getTouchMidX(e){
+    return (e.touches[0].clientX+e.touches[1].clientX)/2;
+  }
+
+  canvas.addEventListener('touchstart',function(e){
+    e.preventDefault();
+    if(e.touches.length===1){
+      // 드래그 시작
+      touch.dragging=true;touch.pinching=false;
+      touch.startX=e.touches[0].clientX;
+      touch.startMin=zoom.minIdx;touch.startMax=zoom.maxIdx;
+    } else if(e.touches.length===2){
+      // 핀치 줌 시작
+      touch.pinching=true;touch.dragging=false;
+      touch.pinchDist=getTouchDist(e);
+      touch.startMin=zoom.minIdx;touch.startMax=zoom.maxIdx;
+      touch.pinchMidX=getTouchMidX(e);
+    }
+  },{passive:false});
+
+  canvas.addEventListener('touchmove',function(e){
+    e.preventDefault();
+    var n=state.closes.length;if(!n)return;
+    var rect=canvas.getBoundingClientRect();
+
+    if(e.touches.length===1&&touch.dragging&&!touch.pinching){
+      // 1손가락 드래그
+      var span=touch.startMax-touch.startMin;
+      var ppx=rect.width/Math.max(1,span);
+      var d=(e.touches[0].clientX-touch.startX)/ppx;
+      var nm=touch.startMin-d,nx=touch.startMax-d;
+      if(nm<0){nx+=(-nm);nm=0;}
+      if(nx>n-1){nm-=(nx-(n-1));nx=n-1;}
+      zoom.minIdx=Math.max(0,nm);zoom.maxIdx=Math.min(n-1,nx);
+      applyZoom();
+    } else if(e.touches.length===2&&touch.pinching){
+      // 2손가락 핀치 줌
+      var newDist=getTouchDist(e);
+      var scale=touch.pinchDist/newDist; // >1 이면 줌아웃, <1 이면 줌인
+      var span=touch.startMax-touch.startMin;
+      var ns=Math.min(n-1,Math.max(5,span*scale));
+      // 핀치 중심점 기준으로 줌
+      var midX=getTouchMidX(e);
+      var r=(midX-rect.left)/rect.width;
+      var c=touch.startMin+span*r;
+      zoom.minIdx=Math.max(0,c-ns*r);
+      zoom.maxIdx=Math.min(n-1,c+ns*(1-r));
+      applyZoom();
+    }
+  },{passive:false});
+
+  canvas.addEventListener('touchend',function(e){
+    if(e.touches.length===0){
+      touch.dragging=false;touch.pinching=false;
+    } else if(e.touches.length===1){
+      // 핀치에서 드래그로 전환
+      touch.pinching=false;touch.dragging=true;
+      touch.startX=e.touches[0].clientX;
+      touch.startMin=zoom.minIdx;touch.startMax=zoom.maxIdx;
+    }
+  },{passive:false});
 }
 
 // ═══════════════════════════════════════════════
