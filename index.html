@@ -1756,7 +1756,7 @@ function renderIndicators(){
 
   // 1. StochRSI (4H) — K < 30에서 골든크로스
   if(srsi){
-    if(srsi.cross==='golden'&&srsi.k<50){
+    if(srsi.cross==='golden'&&srsi.k<30){
       signals.push({pass:true,warn:false,label:'StochRSI',text:'골든크로스 (K='+srsi.k.toFixed(1)+') — 과매도 해소'});
     } else if(srsi.k<20){
       signals.push({pass:false,warn:true,label:'StochRSI',text:'과매도 (K='+srsi.k.toFixed(1)+') — 골든크로스 대기 중'});
@@ -2247,7 +2247,7 @@ function checkTgAlerts(){
           var inFVG=fvgs.filter(function(f){return f.type==='bullish'&&last>=f.bottom&&last<=f.top;}).length>0;
           var avgVol=vo.slice(-20).reduce(function(a,b){return a+b;},0)/20;
           var volOk=vo[vo.length-1]>=avgVol*1.5;
-          var srsiOk=srsi&&srsi.cross==='golden'&&srsi.k<50;
+          var srsiOk=srsi&&srsi.cross==='golden'&&srsi.k<30;
           var vwapOk=!!(vwap&&last>vwap);
           var bbOk=!!(bb&&bb.pos<=20);
           var passCount=[srsiOk,vwapOk,bbOk,inFVG,volOk].filter(Boolean).length;
