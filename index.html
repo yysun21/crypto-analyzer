@@ -2525,27 +2525,26 @@ function renderPortfolio(){
     var sr=techData&&techData.sr?techData.sr:{resistances:[],supports:[]};
     var isLong=d.isLong;
 
-    // ── TP 3개 ──
-    var tp1=isLong?d.price+atrAdj*2  :d.price-atrAdj*2;   // ATR×2 빠른 익절
-    var tp2=isLong?d.price+atrAdj*3  :d.price-atrAdj*3;   // ATR×3 기본
+    // ── TP 3개 — 평단가(d.entry) 기준 계산 ──
+    var tp1=isLong?d.entry+atrAdj*2:d.entry-atrAdj*2;   // ATR×2 빠른 익절
+    var tp2=isLong?d.entry+atrAdj*3:d.entry-atrAdj*3;   // ATR×3 기본
     var tp3=null; // 구조적 저항 — 반드시 진입가 위여야 함
     if(isLong){
-      // 진입가(평단) 위의 저항만 필터링
-      var resAbove=sr.resistances.filter(function(r){return r.val>d.price*1.005;});
+      var resAbove=sr.resistances.filter(function(r){return r.val>d.entry*1.005;});
       if(resAbove.length)tp3=resAbove[0].val*0.999;
     } else {
-      var supBelow=sr.supports.filter(function(r){return r.val<d.price*0.995;});
+      var supBelow=sr.supports.filter(function(r){return r.val<d.entry*0.995;});
       if(supBelow.length)tp3=supBelow[0].val*1.001;
     }
 
-    // ── SL 2개 ──
-    var sl1=isLong?d.price-atrAdj*1.5:d.price+atrAdj*1.5; // ATR×1.5
+    // ── SL 2개 — 평단가(d.entry) 기준 계산 ──
+    var sl1=isLong?d.entry-atrAdj*1.5:d.entry+atrAdj*1.5; // ATR×1.5
     var sl2=null; // 구조적 지지 이탈 — 반드시 진입가 아래여야 함
     if(isLong){
-      var supBelow2=sr.supports.filter(function(r){return r.val<d.price*0.995;});
+      var supBelow2=sr.supports.filter(function(r){return r.val<d.entry*0.995;});
       if(supBelow2.length)sl2=supBelow2[0].val*0.997;
     } else {
-      var resAbove2=sr.resistances.filter(function(r){return r.val>d.price*1.005;});
+      var resAbove2=sr.resistances.filter(function(r){return r.val>d.entry*1.005;});
       if(resAbove2.length)sl2=resAbove2[0].val*1.003;
     }
 
