@@ -406,7 +406,7 @@ body{font-family:'IBM Plex Sans KR',sans-serif;background:var(--bg);color:var(--
 </div>
 
 <!-- ⑤ 진입 타이밍 지표 -->
-<div class="sec-label">⑤ 진입 타이밍 지표 <span style="font-size:10px;color:var(--blue);font-family:'IBM Plex Mono',monospace;text-transform:none;letter-spacing:0;">4H 고정</span></div>
+<div class="sec-label">⑤ 진입 타이밍 지표 <span id="entry-tf-label" style="font-size:10px;color:var(--blue);font-family:'IBM Plex Mono',monospace;text-transform:none;letter-spacing:0;">4H 고정</span></div>
 <!-- 진입 신호 배너 -->
 <div id="entry-signal-banner" style="display:none;padding:10px 14px;border-radius:var(--r);margin-bottom:10px;border:1px solid;"></div>
 <div class="g3" style="margin-bottom:8px;">
@@ -1202,8 +1202,9 @@ function fetchMacro(){
     fetchSpotTicker('BTC'),
     fetchK('BTC','1d',2),
     fetchK('ETH','1d',2),
-    fetchSpotTicker('ETH')
-  ]).catch(function(){return[null,null,null,null];});
+    fetchSpotTicker('ETH'),
+    safeFetch('https://api.coingecko.com/api/v3/global').then(function(r){return r.json();}).catch(function(){return null;})
+  ]).catch(function(){return[null,null,null,null,null];});
 }
 
 function fetchMTF(){
@@ -1223,52 +1224,17 @@ function selectCoin(c){coin=c;document.querySelectorAll('.coin-btn').forEach(fun
 function selectTf(t,l){tf=t;tfLim=l;document.querySelectorAll('.tf-btn').forEach(function(b){b.classList.remove('active');});document.getElementById('tf-'+t).classList.add('active');zoom.total=0;fetchK().then(function(k){var p=parseK(k,tf);state.closes=p.closes;state.highs=p.highs;state.lows=p.lows;state.opens=p.opens;state.vols=p.vols;state.times=p.times;renderAll();});}
 
 // ═══════════════════════════════════════════════
-// 전체 갱신
-// ═══════════════════════════════════════════════
-function refreshAll(){
-  var icon=document.getElementById('ref-icon');icon.classList.add('spin');
-  Promise.all([fetchTicker(),fetchK(),fetchFunding(),fetchOI(),fetchMacro(),fetchMTF()])
-    .then(function(res){
-      state.ticker=res[0];
-      var p=parseK(res[1],tf);
-      state.closes=p.closes;state.highs=p.highs;state.lows=p.lows;state.opens=p.opens;state.vols=p.vols;state.times=p.times;
-      state.funding=res[2];state.oi=res[3];
-      var macro=res[4];
-      var mtf=res[5];
-      state.mtf={
-        '15m':parseK(mtf[0],'15m'),'1h':parseK(mtf[1],'1h'),'4h':parseK(mtf[2],'4h'),'1d':parseK(mtf[3],'1d'),'1w':parseK(mtf[4],'1w')
-      };
-      renderMacro(macro);renderAll();
-      refreshPositionPrices();
-      checkTgAlerts(); // 텔레그램 알림 체크
-      var now=new Date();
-      var el=document.getElementById('upd-time');
-      if(el)el.textContent=now.getHours()+':'+String(now.getMinutes()).padStart(2,'0')+':'+String(now.getSeconds()).padStart(2,'0');
-    })
-    .catch(function(e){alert_('로딩 오류: '+e.message);})
-    .finally(function(){icon.classList.remove('spin');});
-}
-
-// ═══════════════════════════════════════════════
 // 렌더: 거시
 // ═══════════════════════════════════════════════
 function renderMacro(macro){
   if(!macro||!macro[0]||!macro[1])return;
-  var btcT=macro[0],btcK=macro[1],ethK=macro[2],ethT=macro[3];
+  var btcT=macro[0],btcK=macro[1],ethK=macro[2],ethT=macro[3],gecko=macro[4];
   if(!btcT||!ethT)return;
 
   var btcPrice=parseFloat(btcT.lastPrice);
   var btcChg=parseFloat(btcT.priceChangePercent);
   var ethPrice=parseFloat(ethT?ethT.lastPrice:0);
   var ethBtc=ethPrice>0&&btcPrice>0?ethPrice/btcPrice:0;
-
-  // BTC 도미넌스 근사 (BTC mcap / (BTC+주요알트) 비율은 정확하지 않으므로 거래량 비율로 대체)
-  var btcVol=parseFloat(btcT.quoteVolume);
-  var ethVol=ethT?parseFloat(ethT.quoteVolume):0;
-
-  // 전체 크립토 시총은 Binance에서 직접 안 되므로 BTC 시총으로 대체 표시
-  // BTC 유통량 약 19.7M개 (고정값 사용)
-  var btcMcap=btcPrice*19700000;
 
   // ETH/BTC ratio 전일 대비
   var ethBtcChg=0;
@@ -1278,17 +1244,27 @@ function renderMacro(macro){
     ethBtcChg=prevRatio>0?(ethBtc-prevRatio)/prevRatio*100:0;
   }
 
-  // BTC 도미넌스 — 근사치 (BTC 거래량 / BTC+ETH 거래량)
-  var domApprox=btcVol+ethVol>0?btcVol/(btcVol+ethVol)*100*1.8:50; // 실제 도미넌스는 더 높음, 계수로 보정
-  domApprox=Math.min(70,Math.max(40,domApprox));
+  // BTC 도미넌스 — CoinGecko 실제값 우선, 없으면 근사치
+  var domApprox=50,totalMcap=0;
+  if(gecko&&gecko.data&&gecko.data.market_cap_percentage&&gecko.data.market_cap_percentage.btc){
+    domApprox=gecko.data.market_cap_percentage.btc;
+    totalMcap=gecko.data.total_market_cap&&gecko.data.total_market_cap.usd?gecko.data.total_market_cap.usd:0;
+  } else {
+    var btcVol=parseFloat(btcT.quoteVolume);
+    var ethVol=ethT?parseFloat(ethT.quoteVolume):0;
+    domApprox=btcVol+ethVol>0?Math.min(65,Math.max(40,btcVol/(btcVol+ethVol)*100*1.5)):50;
+    totalMcap=btcPrice*19700000*100/domApprox;
+  }
 
   // 렌더
   document.getElementById('mac-dom').textContent=domApprox.toFixed(1)+'%';
   document.getElementById('mac-dom-c').innerHTML='<span style="color:var(--t2);font-size:11px;">BTC 시장 비중</span>';
-  document.getElementById('mac-dom-t').innerHTML=domApprox>55?tagHtml('pg','BTC 우세'):domApprox<45?tagHtml('pr','알트 우세'):tagHtml('pa','균형');
+  document.getElementById('mac-dom-t').innerHTML=domApprox>60?tagHtml('pg','BTC 우세'):domApprox<50?tagHtml('pr','알트 우세'):tagHtml('pa','균형');
 
-  document.getElementById('mac-mcap').textContent='$'+fv(btcMcap);
-  document.getElementById('mac-mcap-c').innerHTML='<span style="color:var(--t2);font-size:11px;">BTC 시총 기준</span>';
+  var mcapText=totalMcap>0?'$'+fv(totalMcap):'$'+fv(btcPrice*19700000);
+  var mcapSub=totalMcap>0?'전체 크립토 시총':'BTC 시총 기준';
+  document.getElementById('mac-mcap').textContent=mcapText;
+  document.getElementById('mac-mcap-c').innerHTML='<span style="color:var(--t2);font-size:11px;">'+mcapSub+'</span>';
   document.getElementById('mac-mcap-t').innerHTML=btcChg>3?tagHtml('pg','강한 상승'):btcChg>0?tagHtml('pg','상승'):btcChg>-3?tagHtml('pr','하락'):tagHtml('pr','급락');
 
   document.getElementById('mac-ethbtc').textContent=ethBtc>0?ethBtc.toFixed(5):'—';
@@ -1304,9 +1280,10 @@ function renderMacro(macro){
   if(btcChg>3)summary.push('BTC 강세 진행 중 — 시장 전반 리스크온');
   else if(btcChg<-3)summary.push('BTC 하락 압력 — 신중한 포지션 필요');
   else summary.push('BTC 보합 — 방향성 탐색 중');
-  if(domApprox>55)summary.push('BTC 도미넌스 높음 → 알트보다 BTC 우선 고려');
-  else if(domApprox<45)summary.push('도미넌스 낮음 → 알트 시즌 가능성');
+  if(domApprox>60)summary.push('BTC 도미넌스 높음 → 알트보다 BTC 우선 고려');
+  else if(domApprox<50)summary.push('도미넌스 낮음 → 알트 시즌 가능성');
   if(ethBtcChg>2)summary.push('ETH/BTC 상승 → 알트코인 강세 신호');
+  else if(ethBtcChg<-2)summary.push('ETH/BTC 하락 → BTC 상대 강세');
   document.getElementById('macro-summary').textContent=summary.join(' · ');
 }
 
@@ -1316,6 +1293,33 @@ function renderMacro(macro){
 function renderAll(){
   renderMetrics();renderStructure();renderChart();renderIndicators();renderStochChart();
   renderMTF();renderVolume();renderFundingOI();renderDivergence();renderVerdict();
+}
+
+// ═══════════════════════════════════════════════
+// 전체 갱신
+// ═══════════════════════════════════════════════
+function refreshAll(){
+  var icon=document.getElementById('ref-icon');if(icon)icon.classList.add('spin');
+  Promise.all([fetchTicker(),fetchK(),fetchFunding(),fetchOI(),fetchMacro(),fetchMTF()])
+    .then(function(res){
+      state.ticker=res[0];
+      var p=parseK(res[1],tf);
+      state.closes=p.closes;state.highs=p.highs;state.lows=p.lows;state.opens=p.opens;state.vols=p.vols;state.times=p.times;
+      state.funding=res[2];state.oi=res[3];
+      var macro=res[4];
+      var mtf=res[5];
+      state.mtf={
+        '15m':parseK(mtf[0],'15m'),'1h':parseK(mtf[1],'1h'),'4h':parseK(mtf[2],'4h'),'1d':parseK(mtf[3],'1d'),'1w':parseK(mtf[4],'1w')
+      };
+      renderMacro(macro);renderAll();
+      refreshPositionPrices();
+      checkTgAlerts();
+      var now=new Date();
+      var el=document.getElementById('upd-time');
+      if(el)el.textContent=now.getHours()+':'+String(now.getMinutes()).padStart(2,'0')+':'+String(now.getSeconds()).padStart(2,'0');
+    })
+    .catch(function(e){alert_('로딩 오류: '+e.message);})
+    .finally(function(){if(icon)icon.classList.remove('spin');});
 }
 
 function renderMetrics(){
@@ -1922,10 +1926,10 @@ function renderIndicators(){
 
 function renderStochChart(){
   if(srsiChart){srsiChart.destroy();srsiChart=null;}
-  // StochRSI 차트도 4H 고정
-  var d4h=state.mtf['4h'];
-  var closes=d4h&&d4h.closes&&d4h.closes.length?d4h.closes:state.closes;
-  var times=d4h&&d4h.times?d4h.times:state.times;
+  // 현재 선택된 TF 기준으로 StochRSI 차트 표시
+  var dtf=state.mtf[tf];
+  var closes=dtf&&dtf.closes&&dtf.closes.length?dtf.closes:state.closes;
+  var times=dtf&&dtf.times?dtf.times:state.times;
   if(!closes||closes.length<30)return;
   var s=calcStochRSI(closes);
   if(!s||!s.kArr||s.kArr.length<2)return;
@@ -1937,6 +1941,8 @@ function renderStochChart(){
   var os=s.kArr.map(function(_,i){return{x:i+off,y:20};});
   var pills=document.getElementById('srsi-pills');
   pills.innerHTML=s.cross==='golden'?tagHtml('pg','K↑ 골든크로스'):s.cross==='dead'?tagHtml('pr','K↓ 데드크로스'):'';
+  var tfLabel=document.getElementById('entry-tf-label');
+  if(tfLabel)tfLabel.textContent=tf.toUpperCase()+' 기준';
   srsiChart=new Chart(document.getElementById('srsiChart'),{
     type:'line',
     data:{datasets:[
@@ -2522,15 +2528,26 @@ function renderPortfolio(){
     // ── TP 3개 ──
     var tp1=isLong?d.price+atrAdj*2  :d.price-atrAdj*2;   // ATR×2 빠른 익절
     var tp2=isLong?d.price+atrAdj*3  :d.price-atrAdj*3;   // ATR×3 기본
-    var tp3=null; // 구조적 저항
-    if(isLong&&sr.resistances.length)tp3=sr.resistances[0].val*0.999;
-    else if(!isLong&&sr.supports.length)tp3=sr.supports[0].val*1.001;
+    var tp3=null; // 구조적 저항 — 반드시 진입가 위여야 함
+    if(isLong){
+      // 진입가(평단) 위의 저항만 필터링
+      var resAbove=sr.resistances.filter(function(r){return r.val>d.price*1.005;});
+      if(resAbove.length)tp3=resAbove[0].val*0.999;
+    } else {
+      var supBelow=sr.supports.filter(function(r){return r.val<d.price*0.995;});
+      if(supBelow.length)tp3=supBelow[0].val*1.001;
+    }
 
     // ── SL 2개 ──
     var sl1=isLong?d.price-atrAdj*1.5:d.price+atrAdj*1.5; // ATR×1.5
-    var sl2=null; // 구조적 지지 이탈
-    if(isLong&&sr.supports.length)sl2=sr.supports[0].val*0.997;
-    else if(!isLong&&sr.resistances.length)sl2=sr.resistances[0].val*1.003;
+    var sl2=null; // 구조적 지지 이탈 — 반드시 진입가 아래여야 함
+    if(isLong){
+      var supBelow2=sr.supports.filter(function(r){return r.val<d.price*0.995;});
+      if(supBelow2.length)sl2=supBelow2[0].val*0.997;
+    } else {
+      var resAbove2=sr.resistances.filter(function(r){return r.val>d.price*1.005;});
+      if(resAbove2.length)sl2=resAbove2[0].val*1.003;
+    }
 
     function gain(tp){return Math.abs(tp-d.entry)*d.qty;}
     function loss(sl){return Math.abs(sl-d.entry)*d.qty;}
