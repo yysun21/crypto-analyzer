@@ -1846,8 +1846,13 @@ function renderIndicators(){
   var warnCount=signals.filter(function(s){return s.warn;}).length;
   var total=signals.length;
 
-  // 필수 조건: ① 4H Supertrend 상승 ② 1H StochRSI 골든크로스(K<50) ③ 4H VWAP -1% 이내
-  var stSig=calcSupertrend(highs,lows,closes,10,3);
+  // 필수 조건: ① 4H Supertrend 상승 (최근 60봉 고정) ② 1H StochRSI 골든크로스(K<50) ③ 4H VWAP -1% 이내
+  // Supertrend: 줌과 무관하게 4H 최근 60봉 고정 기준
+  var d4hFixed=state.mtf['4h'];
+  var stFixedH=d4hFixed?d4hFixed.highs.slice(-60):highs.slice(-60);
+  var stFixedL=d4hFixed?d4hFixed.lows.slice(-60):lows.slice(-60);
+  var stFixedC=d4hFixed?d4hFixed.closes.slice(-60):closes.slice(-60);
+  var stSig=calcSupertrend(stFixedH,stFixedL,stFixedC,10,3);
   var supertrendUp=stSig&&stSig.trend==='uptrend';
   var srsiSig=signals.find(function(s){return s.label==='StochRSI';});
   var vwapSig=signals.find(function(s){return s.label==='VWAP';});
@@ -1885,7 +1890,7 @@ function renderIndicators(){
   else if(s1d===0)d1dCtx='1D 중립 (0pt) — 방향성 불명확';
   else d1dCtx='1D 하락 ('+s1d+'pt) — 역방향 주의';
   var d1dColor=s1d>=2?'var(--green)':s1d>0?'var(--blue)':s1d===0?'var(--t3)':'var(--red)';
-  var stCtx=supertrendUp?'ST↑ 상승':'ST↓ 하락';
+  var stCtx=supertrendUp?'ST↑ 상승 (4H 60봉)':'ST↓ 하락 (4H 60봉)';
   var stColor=supertrendUp?'var(--green)':'var(--red)';
 
   bannerHtml='<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">'
@@ -2266,7 +2271,7 @@ function checkTgAlerts(){
 
         // 1. 진입 타이밍
         if(doEntry&&now-cs.lastEntry>600000){
-          var stOk=calcSupertrend(h,l,cl,10,3);
+          var stOk=calcSupertrend(h.slice(-60),l.slice(-60),cl.slice(-60),10,3);
           var stUp=stOk&&stOk.trend==='uptrend';
           var vwap=calcVWAP(h,l,cl,vo);
           var vwapOk=!!(vwap&&last>vwap*0.99);
