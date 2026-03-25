@@ -1773,26 +1773,28 @@ function renderIndicators(){
   // ── 5가지 진입 조건 평가 ──
   var signals=[];
 
-  // 1. StochRSI (4H) — K < 30에서 골든크로스
-  if(srsi){
-    if(srsi.cross==='golden'&&srsi.k<30){
-      signals.push({pass:true,warn:false,label:'StochRSI',text:'골든크로스 (K='+srsi.k.toFixed(1)+') — 과매도 해소'});
-    } else if(srsi.k<20){
-      signals.push({pass:false,warn:true,label:'StochRSI',text:'과매도 (K='+srsi.k.toFixed(1)+') — 골든크로스 대기 중'});
-    } else if(srsi.k<35){
-      signals.push({pass:false,warn:true,label:'StochRSI',text:'저점 구간 (K='+srsi.k.toFixed(1)+') — 반전 탐색 중'});
+  // 1. StochRSI (1H) — K < 50에서 골든크로스
+  var d1h=state.mtf['1h'];
+  var srsi1h=d1h&&d1h.closes?calcStochRSI(d1h.closes):null;
+  if(srsi1h){
+    if(srsi1h.cross==='golden'&&srsi1h.k<50){
+      signals.push({pass:true,warn:false,label:'StochRSI',text:'1H 골든크로스 (K='+srsi1h.k.toFixed(1)+') — 단기 반등 시작'});
+    } else if(srsi1h.k<30){
+      signals.push({pass:false,warn:true,label:'StochRSI',text:'1H 과매도 (K='+srsi1h.k.toFixed(1)+') — 골든크로스 대기'});
+    } else if(srsi1h.k<50){
+      signals.push({pass:false,warn:true,label:'StochRSI',text:'1H 중립 이하 (K='+srsi1h.k.toFixed(1)+') — 골든크로스 탐색'});
     } else {
-      signals.push({pass:false,warn:false,label:'StochRSI',text:'중립/과매수 (K='+srsi.k.toFixed(1)+') — 타이밍 아님'});
+      signals.push({pass:false,warn:false,label:'StochRSI',text:'1H 중립/과매수 (K='+srsi1h.k.toFixed(1)+') — 타이밍 아님'});
     }
   }
 
-  // 2. VWAP (4H) — 가격이 VWAP 위로 복귀
+  // 2. VWAP (4H) — 가격이 VWAP -1% 이내
   if(vwap){
     var vd=(last-vwap)/vwap*100;
     if(last>vwap*0.99){
       var passText=last>vwap?'VWAP 위 복귀 (+'+vd.toFixed(2)+'%) — 기관 평균단가 위':'VWAP 근접 ('+vd.toFixed(2)+'%) — -1% 이내 허용';
       signals.push({pass:true,warn:false,label:'VWAP',text:passText});
-    } else if(Math.abs(vd)<0.5){
+    } else if(Math.abs(vd)<2){
       signals.push({pass:false,warn:true,label:'VWAP',text:'VWAP 근접 ('+vd.toFixed(2)+'%) — 돌파 확인 필요'});
     } else {
       signals.push({pass:false,warn:false,label:'VWAP',text:'VWAP 아래 ('+vd.toFixed(2)+'%) — 복귀 미확인'});
@@ -1844,29 +1846,28 @@ function renderIndicators(){
   var warnCount=signals.filter(function(s){return s.warn;}).length;
   var total=signals.length;
 
-  // 필수 조건: StochRSI + VWAP 둘 다 충족해야 진입 가능
+  // 필수 조건: ① 4H Supertrend 상승 ② 1H StochRSI 골든크로스(K<50) ③ 4H VWAP -1% 이내
+  var stSig=calcSupertrend(highs,lows,closes,10,3);
+  var supertrendUp=stSig&&stSig.trend==='uptrend';
   var srsiSig=signals.find(function(s){return s.label==='StochRSI';});
   var vwapSig=signals.find(function(s){return s.label==='VWAP';});
-  var mandatoryOk=srsiSig&&srsiSig.pass&&vwapSig&&vwapSig.pass;
+  var mandatoryOk=supertrendUp&&srsiSig&&srsiSig.pass&&vwapSig&&vwapSig.pass;
 
-  // ── 배너 렌더 — 4H 조건 판정, 필수 2개 모두 충족해야 진입 가능 ──
+  // ── 배너 렌더 — 필수 3개 충족 + 선택 중 2개 이상 ──
   var bannerHtml,bannerBg,bannerBorder;
   var headerColor,headerIcon,headerText;
 
-  if(mandatoryOk&&passCount>=3){
-    // 필수 충족 + 전체 3개 이상 → 진입 가능
+  if(mandatoryOk&&passCount>=2){
     headerColor='var(--green)';headerIcon='✓';
     headerText='진입 가능 ('+passCount+'/'+total+' · 필수 ✓)';
     bannerBg='var(--gbg)';bannerBorder='var(--gb)';
-  } else if(mandatoryOk&&passCount>=2){
-    // 필수 충족 + 전체 2개 → 조건부
-    headerColor='var(--amber)';headerIcon='⚠';
-    headerText='조건부 진입 ('+passCount+'/'+total+' · 필수 ✓)';
-    bannerBg='var(--abg)';bannerBorder='var(--ab)';
-  } else if(!mandatoryOk&&passCount>=3){
-    // 필수 미충족 → 숫자 많아도 대기
+  } else if(!supertrendUp){
+    headerColor='var(--red)';headerIcon='✗';
+    headerText='진입 자제 — 4H Supertrend 하락 중';
+    bannerBg='var(--rbg)';bannerBorder='var(--rb)';
+  } else if(!mandatoryOk&&passCount>=2){
     var missing=[];
-    if(!srsiSig||!srsiSig.pass)missing.push('StochRSI');
+    if(!srsiSig||!srsiSig.pass)missing.push('1H StochRSI');
     if(!vwapSig||!vwapSig.pass)missing.push('VWAP');
     headerColor='var(--amber)';headerIcon='⚠';
     headerText='필수 미충족 — 대기 ('+missing.join('·')+' 확인 필요)';
@@ -1884,10 +1885,15 @@ function renderIndicators(){
   else if(s1d===0)d1dCtx='1D 중립 (0pt) — 방향성 불명확';
   else d1dCtx='1D 하락 ('+s1d+'pt) — 역방향 주의';
   var d1dColor=s1d>=2?'var(--green)':s1d>0?'var(--blue)':s1d===0?'var(--t3)':'var(--red)';
+  var stCtx=supertrendUp?'ST↑ 상승':'ST↓ 하락';
+  var stColor=supertrendUp?'var(--green)':'var(--red)';
 
   bannerHtml='<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">'
     +'<span style="font-size:12px;font-weight:500;color:'+headerColor+';">'+headerIcon+' '+headerText+'</span>'
-    +'<span style="font-size:10px;color:'+d1dColor+';font-family:\'IBM Plex Mono\',monospace;">'+d1dCtx+'</span>'
+    +'<span style="font-size:10px;font-family:\'IBM Plex Mono\',monospace;">'
+    +'<span style="color:'+stColor+';">'+stCtx+'</span>'
+    +' · <span style="color:'+d1dColor+';">'+d1dCtx+'</span>'
+    +'</span>'
     +'</div>';
 
   // 조건 목록
@@ -2260,20 +2266,29 @@ function checkTgAlerts(){
 
         // 1. 진입 타이밍
         if(doEntry&&now-cs.lastEntry>600000){
-          var srsi=calcStochRSI(cl);
+          var stOk=calcSupertrend(h,l,cl,10,3);
+          var stUp=stOk&&stOk.trend==='uptrend';
           var vwap=calcVWAP(h,l,cl,vo);
-          var bb=calcBB(cl);
-          var fvgs=detectFVG(h,l);
-          var inFVG=fvgs.filter(function(f){return f.type==='bullish'&&last>=f.bottom&&last<=f.top;}).length>0;
-          var avgVol=vo.slice(-20).reduce(function(a,b){return a+b;},0)/20;
-          var volOk=vo[vo.length-1]>=avgVol*1.5;
-          var srsiOk=srsi&&srsi.cross==='golden'&&srsi.k<30;
           var vwapOk=!!(vwap&&last>vwap*0.99);
-          var bbOk=!!(bb&&bb.pos<=20);
-          var passCount=[srsiOk,vwapOk,bbOk,inFVG,volOk].filter(Boolean).length;
-          if(srsiOk&&vwapOk&&passCount>=3){
-            cs.lastEntry=now;
-            sendTg('🟢 <b>'+c+' 진입 타이밍</b>\n필수 충족 + '+passCount+'/5 조건\n현재가: '+fp(last)+'\nStochRSI K='+srsi.k.toFixed(1)+' | VWAP '+(vwapOk?'위':'아래')+'\n⏰ '+new Date().toLocaleTimeString());
+          if(stUp&&vwapOk){
+            safeFetch(BFUT+'/klines?symbol='+c+'USDT&interval=1h&limit=60')
+              .then(function(r1h){return r1h.json();})
+              .then(function(k1h){
+                var p1h=parseK(k1h,'1h');
+                var srsi1h=calcStochRSI(p1h.closes);
+                var srsiOk=srsi1h&&srsi1h.cross==='golden'&&srsi1h.k<50;
+                var bb=calcBB(cl);
+                var fvgs=detectFVG(h,l);
+                var inFVG=fvgs.filter(function(f){return f.type==='bullish'&&last>=f.bottom&&last<=f.top;}).length>0;
+                var avgVol=vo.slice(-20).reduce(function(a,b){return a+b;},0)/20;
+                var volOk=vo[vo.length-1]>=avgVol*1.5;
+                var bbOk=!!(bb&&bb.pos<=20);
+                var passCount=[srsiOk,vwapOk,bbOk,inFVG,volOk].filter(Boolean).length;
+                if(srsiOk&&passCount>=2){
+                  cs.lastEntry=now;
+                  sendTg('🟢 <b>'+c+' 진입 타이밍</b>\nST↑ + 필수 충족 + '+passCount+'/5\n현재가: '+fp(last)+'\n1H StochRSI K='+srsi1h.k.toFixed(1)+' | VWAP '+(vwapOk?'위':'근접')+'\n⏰ '+new Date().toLocaleTimeString());
+                }
+              }).catch(function(){});
           }
         }
 
